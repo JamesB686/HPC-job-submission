@@ -1,0 +1,71 @@
+#!/bin/bash
+
+function help_ORCA_ {
+
+    cat << EOF
+
+    =========================================================================================================================
+                                                            ORCA HELP                                                        
+    =========================================================================================================================
+
+    Welcome to Orca 5.0.4 on the CX1 HPC network. 
+
+    For detailed instructions of use of Orca, including the construction of input decks, keywords and functionality
+    please refer to the following links:
+
+        Orca Manual (v.4.2.1)           : https://www.afs.enea.it/software/orca/orca_manual_4_2_1.pdf
+        Orca Input Libraryn             : https://sites.google.com/site/orcainputlibrary/home
+        Orca Forum (Account Required)   : https://orcaforum.kofo.mpg.de/app.php/portal?sid=f66b661f5ef206cd110d158a0adb27fa
+        Orca Tutorials (v.5.0)          : https://www.orcasoftware.de/tutorials_orca/index.html
+    
+    The instructions presented here are for the use of Orca on the CX1 network and although some information regarding
+    download and installation of the software are included, Orca usage is not.
+
+    RUNNING ORCA ON CX1
+    --------------------------------------
+    
+    To set up a path link to the necessary executables for Orca, the following command should be run
+
+        'bash /rds/general/user/jwb321/home/etc/hpc_orca_submission_global/config_ORCA.sh'
+    
+    Note that no downloaded files are required to run the software. Thus the default locations of the Orca and MPI folders are
+    fine. Choose a settings folder, by default the folder is set at 
+
+        \$HOME/etc/runORCA/settings
+    
+    Once the link is set to the global orca submission scripts, any changes, debugs, or updates will automatically be applied
+    globally.
+
+    Once the shell script has been executed run the command
+
+        'source ~/.bashrc'
+        
+    Three alias executables will have been added to your .bashrc profile:
+
+        Porca           : Executable for running parallel Orca calculations
+        SETorca         : Executable for displaying your settings file
+        HELPorca        : Executable for displaying help (also generates a HELP file in your settings directory)
+
+    Please ensure that the updated .bashrc profile has been sourced ('source ~/.bashrc') so that the executables are accessible 
+    in all directories.
+    
+    Parallel Orca calculations require OpenMPI-4.1.1. This module has been set up within during the shell script execution. Please 
+    ensure that no other OpenMPI modules are loaded when running parallel Orca calculations.
+  
+    To run Orca in parallel first ensure that an input deck has been generated with the '.inp' extension. Using the Porca executable
+    with the correct flags will then generate a qsub file that can be submitted to the PBS queue. 
+    
+        Example Submission:
+
+            'Porca -in test.inp -nd 1 -wt 03:00'
+        
+    Further information can be found by running 'Porca -help' command.
+
+    Parallel runs of Orca require that the number of processors requested is specified in the input deck under the '%PAL' flag. The
+    submission script will automatically edit the input file so as to ensure that the requested number of processors is included in
+    the input file.
+
+EOF
+}
+
+help_ORCA_

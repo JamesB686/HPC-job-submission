@@ -1,0 +1,504 @@
+#!/bin/bash
+
+# Input Format
+# orca_gen --x exe --set --in input --nd ND --wt WT --
+# input : str, input .inp
+# ref   : str, ref .gbw, .bas, .xyz
+# ND    : int, number of nodes
+# WT    : str, walltime in hh:mm
+# The sequence of the parameters can be changed.
+
+function startup_msg_ {
+    cat << EOF
+    
+    =================================================================
+                    PARALLEL ORCA SUBMISSION GENERATION
+    =================================================================
+
+EOF
+}
+
+function get_input_ {
+
+    # List of flags: -nd, -wt, -in, -help
+
+    param_list=$(getopt -a -l help,set:,nd:,wt:,in:,ref: -n "$0" -- ${in_var} 2> /dev/null) 
+
+    eval set -- "${param_list}"
+    while [[ true ]]; do
+        case $1 in
+        --help )
+            help_PORCA_; exit ;;
+        --set )
+            shift; SETFILE=($1) ;;
+        --in )
+            shift; INFILE=($1) ;;
+        --ref )
+            shift; REF+=($1) ;;
+        --nd )
+            shift; ND=($1) ;; 
+        --wt )
+            shift; WT=($1) ;;
+        -- )
+            break ;;
+        * )
+            cat << EOF
+    ERROR:
+        Format error in input list.
+
+EOF
+            print_HELP_
+            exit ;;
+        esac
+        shift
+    done
+
+    INPDIR=`realpath ${INFILE}`
+    INPDIR=${INPDIR%/*}
+    check_SETFILE_
+    check_INFILE_
+    if [[ ! -z ${REF} ]]; then
+        check_REF_
+    else
+        REF+=('none')
+    fi
+    check_ND_
+    check_WT_
+
+    cat << EOF
+-----------------------------------------
+             INPUT Parameters
+-----------------------------------------
+    Input file          = ${INFILE}
+    Number of nodes     = ${ND}
+    Walltime            = ${WT}
+    Settings file       = ${SETFILE}
+    Reference file(s)   = ${REF[@]}
+-----------------------------------------
+
+EOF
+
+}
+
+function check_SETFILE_ {
+    if [[ ! -e ${SETFILE} || ! -s ${SETFILE} ]]; then
+        cat << EOF
+
+    ERROR: Settings file not found. Please set up the settings file before continuing
+    Specified directory : ${SETFILE}
+
+EOF
+        exit
+    fi
+}
+
+function check_INFILE_ {
+    
+    # Required input file after -in flag.
+
+    if [[ -z ${INFILE} ]]; then
+        cat << EOF
+    
+    ERROR: Input files must be specified by '-in' flag.
+
+EOF
+        exit
+    fi
+
+    if [[ ${#INFILE[@]} > 1 ]]; then
+        cat << EOF
+    
+    ERROR: More than one input files specified.
+
+        Given Inputs: ${INFILE[@]} 
+
+EOF
+        exit
+    fi
+
+    if [[ ! -e ${INFILE} || ! -s ${INFILE} ]]; then
+        cat << EOF
+    
+    ERROR: Input file does not exist / is empty. 
+
+        Given input : ${INFILE}
+
+EOF
+        exit
+    fi
+
+    input_extension=`echo ${INFILE} | grep ".inp"`
+    if [[ -z ${input_extension} ]]; then
+        cat << EOF
+    
+    ERROR: Please specify a '.inp' file extension.
+
+        Given Input: ${INFILE}
+
+EOF
+        exit
+    fi
+
+}
+
+function check_REF_ {
+    
+    # Checks whether the specified references exist in the directory.
+
+    for (( i = 0; i < ${#REF[@]}; i++ )); do
+        ref=${REF[$i]}
+        if [[ ${ref} == 'none' ]]; then
+            continue
+        else
+            if [[ -z $(find ${INPDIR} -maxdepth 1 -name "*${ref}*") ]]; then
+                cat << EOF
+
+    ERROR: ${ref} was not found in ${INPDIR}/
+    Please ensure that references are placed in the working directory.
+
+        Reference Given: ${ref}
+
+EOF
+                exit
+            fi
+        fi
+    done
+}
+
+function check_ND_ {
+
+    # Required number of nodes after -nd flag
+
+    if [[ ${ND} > 3 ]]; then
+        cat << EOF
+    
+    ERROR: Please specify a reasonable number of nodes. 
+    Restriction is placed on more than 3 nodes requested.
+
+        Number of Nodes: ${ND}
+
+EOF
+        exit
+    fi
+
+}
+
+function check_WT_ {
+
+    # Check the format of the walltime input
+
+    wt_separator=`echo ${WT} | grep ':'`
+    if [[ -z ${wt_separator} ]]; then
+        cat << EOF
+    
+    ERROR: Please include a separator (':') for the walltime.
+        Walltime Given: ${WT}
+    
+EOF
+        exit
+    fi
+
+}
+
+function help_PORCA_ {
+    cat << EOF
+
+    ==========================================
+     Orca Parallel Submission Executable Help
+    ==========================================
+    
+    Using the "Porca" command generates a submission script for Imperial HPC.
+
+    The executable is designed to run the parallelized version of Orca with a user specified number of processors.
+
+    The following flags are available:
+        
+        -in     : Orca input (.inp)         *
+        -nd     : Number of cores (< 4)     *
+        -wt     : Walltime (hh:mm)          *
+        -ref    : Reference(s)
+        -help   : Shows instructions
+    
+    Flags with a * are required for the generation of the submission script.
+
+    The submission generation script is found at
+
+        $(dirname $0)/orca_gen
+
+    Input example:
+
+        'Porca -in h2o.inp -nd 2 -wt 10:00'
+
+    Multiple reference files may be supplied for one input file. For each reference please use a seperate -ref flag.
+    
+        'Porca -in h2o.inp -ref h2o.gbw -ref h2o.bas -nd 2 -wt 10:00'
+    
+    Once generated the .qsub file may be submitted to the queue using the command:
+
+        'qsub < input.qsub' or 'qsub input.qsub'
+    
+    For more detailed information with regards to Orca and HPC run the command:
+
+        'HELPorca'
+
+    ==========================================
+
+EOF
+
+}
+
+function get_subinfo_ {
+    
+    # extension for submission file
+    
+    SUB_EXT=`echo $(grep -w -A 1 'SUBMISSION_EXT' ${SETFILE} | tail -1)`
+    SUB_EXT=${SUB_EXT#*.}
+    
+    # processors per node
+    
+    NCPU=`echo $(grep -w -A 1 'NCPU_PER_NODE' ${SETFILE} | tail -1)`
+
+    # memory per node
+
+    MEM=`echo $(grep -w -A 1 'MEM_PER_NODE' ${SETFILE} | tail -1)`
+    MEM=${MEM%G*}
+    MEM=${MEM%g*}
+
+    # threads per process
+
+    TRED=`echo $(grep -w -A 1 'NTHREAD_PER_PROC' ${SETFILE} | tail -1)`
+    
+    # processes per node = NCPU/TRED, multi-threading in 1 CPU is not allowed.
+    
+    PROC=`echo "scale=0;${NCPU}/${TRED}" | bc`
+
+    # total number of processes = PROC*ND
+
+    TPROC=`echo "scale=0;${ND}*${NCPU}/${TRED}" | bc`
+    
+    # number of GPUs per node
+    
+    NGPU=`echo $(grep -w -A 1 'NGPU_PER_NODE' ${SETFILE} | tail -1)`
+    if [[ ${NGPU} -eq 0 ]]; then
+        NGPU=""
+        TGPU=""
+    else
+        NGPU=`echo ":ngpus=${NGPU}"`
+
+    # type of GPUs per node
+
+        TGPU=`echo $(grep -w -A 1 'GPU_TYPE' ${SETFILE} | tail -1)`
+        TGPU=`echo ":gpu_type=${TGPU}"`
+    fi
+
+    # Command for execution of script
+
+    COMMAND=`echo $(grep -w -A 1 'EXECUTABLE' ${SETFILE} | tail -1)`
+}
+
+function check_scripts_ {
+
+    # Orca executable script.
+
+    SCRIPT='orca_run'
+
+    # Orca post processing script.
+
+    POSTSCRIPT='orca_post'
+
+    # Check whether the scripts exist in the directories.
+
+    ls ${SCRIPTDIR}/${SCRIPT} > /dev/null 2>&1
+    if [[ $? -ne 0 ]]; then
+        cat << EOF
+
+    ERROR: Job execution script not found.
+    Please ensure that the './orca_run' executable is in following directory:
+
+        Script Directory: ${SCRIPTDIR}
+
+EOF
+        exit
+    fi
+
+    ls ${SCRIPTDIR}/${POSTSCRIPT} > /dev/null 2>&1
+    if [[ $? -ne 0 ]]; then
+        cat << EOF
+
+    ERROR: Job execution script not found.
+    Please ensure that the './orca_post' executable is in following directory:
+
+        Script Directory: ${SCRIPTDIR}
+
+EOF
+        exit
+    fi
+}
+
+function get_subtemplate_ {
+
+    # template file
+
+    BG_TEMP=`grep -nw 'JOB_SUBMISSION_TEMPLATE' ${SETFILE}`
+    BG_TEMP=`echo "scale=0;${BG_TEMP%%:*}+2" | bc`
+
+    line_endflag=${BG_TEMP}
+    endflag=`awk NR==${line_endflag}'{print}' ${SETFILE}`
+
+    while [[ ${endflag} != '------------'* ]]; do
+        line_endflag=`echo "scale=0;${line_endflag}+1" | bc`
+        endflag=`awk NR==${line_endflag}'{print}' ${SETFILE}`
+    done
+
+    ED_TEMP=`echo "scale=0;${line_endflag}-1" | bc`
+    TEMPT=`sed -n "${BG_TEMP},${ED_TEMP}p" ${SETFILE}`
+}
+
+function edit_input_ {
+
+    INPFUL=${INPDIR}/${INFILE}
+
+    # Substitute the number of processers into the input file.
+    grep -nw -i '%PAL' ${INPFUL} > /dev/null 2>&1
+    if [[ $? -ne 0 ]];then
+        echo "%PAL NPROCS ${TPROC} END" >> ${INPFUL}
+        cat << EOF
+    MESSAGE: Input file has been edited to include number of processors.
+        
+EOF
+    else 
+        sed -i -e "s|NPROCS |NPROCS ${TPROC}|I" -e "s|NPROCS [0-9]\+|NPROCS ${TPROC}|I" ${INPFUL}
+        cat << EOF
+    MESSAGE: Input file has been edited to match number of processors.
+            
+EOF
+    fi
+
+    # Check that the correct reference blocks are included in the input file
+
+    for (( i = 0; i < ${#REF[@]}; i++ )); do
+        ref_file=${REF[$i]}
+        ref_end=${REF[$i]##*.}
+        if [[ ${ref_end} == 'bas' ]]; then
+            grep -nw ${ref_file} ${INPFUL} > /dev/null 2>&1
+            if [[ $? -ne 0 ]];then
+                cat << EOF
+    ERROR: Reference basis set has not be found in the input file.
+    Please ensure that this is included.
+
+        Required block:
+
+            %basis
+                GTOName = "${REF[$i]}"
+            end
+
+EOF
+                exit
+            fi
+        fi
+
+        if [[ ${ref_end} == 'gbw' ]]; then
+            grep -nw ${ref_file} ${INPFUL} > /dev/null 2>&1
+            if [[ $? -ne 0 ]];then
+                if [[ ${REF[$i]%.*} == ${INFILE%.*} ]];then
+                    cat << EOF
+    ############################################################################################      
+
+    WARNING: Reference orbital file not found in input file, but is the same name as input file.
+    This file will be automatically used as a guess in the calculation.
+
+    Please intervene if this is not desirable.
+
+    ############################################################################################
+
+EOF
+                else
+                    cat << EOF
+    ERROR: Reference orbital file has not been found in input file.
+    Please ensure that this is included.
+
+        Required block:
+
+            %moinp "${REF[$i]}"
+
+EOF
+                    exit
+                fi
+            fi
+        fi
+    done      
+}
+
+function generate_sub_ {
+
+    check_scripts_
+    get_subinfo_
+    edit_input_
+    get_subtemplate_
+
+
+    JOBNAME=${INFILE%.*}
+
+    for (( i = 0; i < ${#REF[@]}; i++ )); do
+        ref_temp=`echo "-ref ${REF[$i]} "`
+        REFSUB+=${ref_temp}
+    done
+
+    cat << EOF > ${JOBNAME}.${SUB_EXT}
+${TEMPT}
+EOF
+    
+    echo "${SCRIPTDIR}/${SCRIPT} -set ${SETFILE} -in ${INFILE} ${REFSUB[@]} -- '${COMMAND}'" >> ${JOBNAME}.${SUB_EXT}
+    echo "${SCRIPTDIR}/${POSTSCRIPT} -in ${INFILE} -set ${SETFILE}" >> ${JOBNAME}.${SUB_EXT}
+    echo -e "\n" >> ${JOBNAME}.${SUB_EXT}
+    echo "if [[ -f ./${JOBNAME}.run ]];then" >> ${JOBNAME}.${SUB_EXT}
+    echo "chmod 755 ./${JOBNAME}.run"        >> ${JOBNAME}.${SUB_EXT}
+    echo "./${JOBNAME}.run"                  >> ${JOBNAME}.${SUB_EXT}
+    echo 'fi'                                >> ${JOBNAME}.${SUB_EXT}
+
+    # Substitute the PBS variables.
+ 
+    sed -i "s|\${V_JOBNAME}|${JOBNAME}|g" ${JOBNAME}.${SUB_EXT}
+    sed -i "s|\${V_ND}|${ND}|g" ${JOBNAME}.${SUB_EXT}
+    sed -i "s|\${V_NCPU}|${NCPU}|g" ${JOBNAME}.${SUB_EXT}
+    sed -i "s|\${V_MEM}|${MEM}GB|g" ${JOBNAME}.${SUB_EXT}
+    sed -i "s|\${V_PROC}|${PROC}|g" ${JOBNAME}.${SUB_EXT}
+    sed -i "s|\${V_TRED}|${TRED}|g" ${JOBNAME}.${SUB_EXT}
+    sed -i "s|\${V_NGPU}|${NGPU}|g" ${JOBNAME}.${SUB_EXT}
+    sed -i "s|\${V_TGPU}|${TGPU}|g" ${JOBNAME}.${SUB_EXT}
+    sed -i "s|\${V_WT}|${WT}:00|g" ${JOBNAME}.${SUB_EXT}
+    sed -i "s|\${V_TPROC}|${TPROC}|g" ${JOBNAME}.${SUB_EXT}   
+    
+
+}
+
+in_var="header "$@""
+SCRIPTDIR=`dirname $0`
+
+startup_msg_
+get_input_
+generate_sub_
+
+cat << EOF
+    File ${JOBNAME}.${SUB_EXT} has been generated.
+
+                         Job information
+----------------------------------------------------------------
+    PBS qsub file                 = ${JOBNAME}.${SUB_EXT}
+    Job submission script         = ${SCRIPTDIR}/${SCRIPT}
+    Post processing script        = ${SCRIPTDIR}/${POSCRIPT}
+    Settings script               = ${SETFILE}
+    Number of nodes               = ${ND}
+    Commands                      = ${COMMAND}
+    Input directory               = ${INPDIR}
+    Input file(s)                 = ${INFILE}
+    Reference files(s)            = ${REF[@]}
+----------------------------------------------------------------
+
+Please submit to queue using command:
+
+    'qsub < ${JOBNAME}.${SUB_EXT}' or 'qsub ${JOBNAME}.${SUB_EXT}'
+
+EOF
+
+exit
