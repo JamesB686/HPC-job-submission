@@ -1,0 +1,86 @@
+#!/bin/bash
+
+function help_ORCA_ {
+
+    cat << EOF
+
+    =========================================================================================================================
+                                                            ORCA HELP                                                        
+    =========================================================================================================================
+
+    Welcome to Orca 5.0.4 on the CX1 HPC network. 
+
+    For detailed instructions of use of Orca, including the construction of input decks, keywords and functionality
+    please refer to the following links:
+
+        Orca Manual (v.4.2.1)           : https://www.afs.enea.it/software/orca/orca_manual_4_2_1.pdf
+        Orca Input Libraryn             : https://sites.google.com/site/orcainputlibrary/home
+        Orca Forum (Account Required)   : https://orcaforum.kofo.mpg.de/app.php/portal?sid=f66b661f5ef206cd110d158a0adb27fa
+        Orca Tutorials (v.5.0)          : https://www.orcasoftware.de/tutorials_orca/index.html
+    
+    The instructions presented here are for the use of Orca on the CX1 network and although some information regarding
+    download and installation of the software are included, Orca usage is not.
+
+    ORCA SOFTWARE
+    --------------------------------------
+
+    The downloads for the Orca software can be found on the Orca forum 
+    (https://orcaforum.kofo.mpg.de/app.php/portal?sid=f66b661f5ef206cd110d158a0adb27fa).
+
+    Please note than creation of an account is required in order to access the forum. The files must be downloaded as three
+    seperate .tar files, listed as '_part1_', '_part2_' and '_part3'. Once downloaded and unzipped it is advised to place
+    all files into one master folder. The folder directory may then be added to your \$PATH and \$LD_LIBRARY_PATH.
+
+    Running the './orca' executable in this file with a specified input deck is all that is necessary to run Orca. 
+
+    For parallel execution of Orca, the full pathname must also be specfied alongside the './orca' executable as so:
+
+        '/path/to/directory/orca test.inp'
+    
+    Note that for parallel execution OpenMPI v.4.1.1 must be installed and compiled on the system and incldued in the \$PATH
+    and \$LD_LIBRARY_PATH/
+
+    For use on the CX1 cluster, no installation of the files is required. Please refer to 'RUNNING ORCA ON CX1' for related 
+    instructions.
+
+    RUNNING ORCA ON CX1
+    --------------------------------------
+
+    Once './config_ORCA.sh' script has been executed the following scripts should be loaded into your script directory file:
+
+        orca_gen        : Script to generate PBS submission jobs
+        orca_run        : Script to execute the job and start the Orca calculation
+        orca_post       : Script to processes the job after the calculation has ended
+        orca_help       : Script to generate instructions on using Orca on CX1
+        settings        : Settings file with required variables for running Orca on CX1
+    
+    Three alias executables are also added to your .bashrc profile:
+
+        Porca           : Executable for running parallel Orca calculations
+        SETorca         : Executable for displaying your settings file
+        HELPorca        : Executable for displaying help (also generates a HELP file in your settings directory)
+
+    Please ensure that the updated .bashrc profile has been sourced ('source ~/.bashrc') so that the executables are accessible 
+    in all directories.
+    
+    Parallel Orca calculations require OpenMPI-4.1.1. This module is not available in the standard module directory of CX1.
+    To use this version, one can either compile and setup their own copy of the software or use the default MPI directory in
+    './config_ORCA.sh'.
+  
+    To run Orca in parallel first ensure that an input deck has been generated with the '.inp' extension. Using the Porca executable
+    with the correct flags will then generate a qsub file that can be submitted to the PBS queue. 
+    
+        Example Submission:
+
+            'Porca -in test.inp -nd 1 -wt 03:00'
+        
+    Further information can be found by running 'Porca -help' command.
+
+    Parallel runs of Orca require that the number of processors requested is specified in the input deck under the '%PAL' flag. The
+    submission script will automatically edit the input file so as to ensure that the requested number of processors is included in
+    the input file.
+
+EOF
+}
+
+help_ORCA_

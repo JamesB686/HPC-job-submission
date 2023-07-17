@@ -1,0 +1,386 @@
+#!/bin/bash
+
+# get inputs in command line style
+
+function get_input_ {
+
+    # Useful variables: 
+    # SETFILE: Path to 'settings' file
+    # JOBFILE: Full name of the main input file
+    # JOBNAME: Name of input without extension
+    # REFNAME: Reference file name without extension
+    # COMMAND: Command + options to lauch calculation
+
+    param_list=$(getopt -a -l set:,in:,ref: -n "$0" -- ${in_var} 2> /dev/null) 
+    eval set -- "${param_list}"
+    while [[ true ]]; do
+        case $1 in
+        --set )
+            shift; SETFILE=$1 ;;
+        --in ) 
+            shift; JOBFILE=$1; JOBNAME=${JOBFILE%.*} ;;
+        --ref )
+            shift; 
+			if [[ ! -z $1 ]]; then
+			    REFILE+=("$1"); 
+                REFNAME+=("${1%.*}");
+    	fi ;;
+        -- ) 
+            shift;
+            while [[ ! -z $1 ]]; do
+                COMMAND=$1;
+                shift;
+            done; 
+            break ;;
+        * ) 
+            echo "ERROR: Input not recognized. Refer to instructions.";
+            echo "Job terminated without calculation.";
+            exit ;;
+        esac
+        shift
+    done
+}
+
+in_var="header "$@""
+get_input_
+
+# Set the output directory and filename. Check if it already exists.
+
+OUTDIR=$(realpath ${JOBFILE})
+OUTDIR=${OUTDIR%/*}
+OUTPUT=${JOBNAME}.out
+
+if [[ -e ${OUTDIR}/${OUTPUT} && -s ${OUTDIR}/${OUTPUT} ]]; then
+    echo "Warning! Output exists: ${OUTDIR}/${OUTPUT}" | tee -a ${OUTDIR}/${OUTPUT}
+    echo "New data will be attached to the same file." | tee -a ${OUTDIR}/${OUTPUT}
+fi
+
+echo "Output filename: ${OUTDIR}/${OUTPUT}"
+echo ""
+
+# Load in the MPI module. Also loaded at qsub execution.
+
+MDIR=`echo $(grep -w -A 1 'MPIDIR' ${SETFILE} | tail -1)`
+if [[ ${MDIR} == *'module load'* ]]; then
+    ${MDIR} 2>&1
+else
+    export PATH="${MDIR}:${PATH}"
+fi
+
+echo "Executable uses the mpiexec command automatically."
+echo ""
+
+# Set up the temporary directories.
+
+JOBTMPDIR=`echo $(grep -w -A 1 'JOB_TMPDIR' ${SETFILE} | tail -1)`
+if [[ -z ${JOBTMPDIR} || ${JOBTMPDIR} == *'default'* ]]; then # As subdirectory under the current one
+    JOBTMPDIR=$(dirname ${JOBFILE})/${JOBNAME}_${PBS_JOBID%.*}
+	JOBTMPDIR=`realpath ${JOBTMPDIR}`
+    move_file=true
+    mkdir -p ${JOBTMPDIR}
+    echo "Temporary directory : ${JOBTMPDIR}"
+elif [[ ${JOBTMPDIR} == *'nodir'* ]]; then # In current directory
+    JOBTMPDIR=$(dirname ${JOBFILE})
+	JOBTMPDIR=`realpath ${JOBTMPDIR}`
+    move_file=false
+    echo "Temporary file stored under the current directory ${OUTDIR}"
+else # In a separate directory
+    JOBTMPDIR=${JOBTMPDIR}/${JOBNAME}_${PBS_JOBID%.*}
+	JOBTMPDIR=`realpath ${JOBTMPDIR}`
+    move_file=true
+    mkdir -p ${JOBTMPDIR}
+    echo "Temporary directory : ${JOBTMPDIR}"
+fi
+
+SCRIPT="Job_Script_${PBS_JOBID%.*}"
+sed '1,/^#tag_copy/d' $0 > ${JOBTMPDIR}/${SCRIPT}
+
+# Execute file 
+
+cat << EOF
+
+Job Execution Script
+--------------------------------------------
+${JOBTMPDIR}/${SCRIPT}
+--------------------------------------------
+
+EOF
+
+cat << EOF | tee -a ${OUTDIR}/${OUTPUT}
+============================================
+               ORCA CALCULATION
+============================================
+EOF
+cat << EOF
+
+Running Job Report
+--------------------------------------------
+EOF
+cat << EOF | tee -a ${OUTDIR}/${OUTPUT}
+DATE START : $(date)
+
+EOF
+# `echo "chmod 777 ${JOBTMPDIR}/${SCRIPT}"`
+source ${JOBTMPDIR}/${SCRIPT}
+cat << EOF | tee -a ${OUTDIR}/${OUTPUT}
+
+--------------------------------------------
+          ORCA CALCULATION FINISHED
+
+DATE END   : $(date)
+--------------------------------------------
+
+EOF
+exit
+
+# Copied content: Below are copied in temporary directory
+
+#tag_copy
+# Synchronise nodes
+
+if [[ ! -z ${PBS_NODEFILE} ]]; then
+    if [[ -e ${PBS_NODEFILE} ]]; then
+        cat << EOF
+PBS NODEFILE Info
+--------------------------------------------
+Found in ${PBS_NODEFILE}
+EOF
+        PCLIST=`awk '{if ($I != old){printf("%s ",$I);old=$I}}' ${PBS_NODEFILE}`
+        for PC in ${PCLIST[@]}; do
+            ssh ${PC} "if [[ ! -d ${JOBTMPDIR} ]]; then mkdir -p ${JOBTMPDIR} ;fi; echo '  temporary directory on '${PC}"
+            scp $0 ${PC}:${JOBTMPDIR}/${SCRIPT}
+        done
+        cat << EOF
+--------------------------------------------
+
+EOF
+    else
+        echo '${PBS_NODEFILE} not found'
+        exit
+    fi
+fi
+
+# Generate basic information of output file
+
+INPDIR=${OUTDIR}
+
+cat << EOF
+--------------------------------------------
+               Pre-Calc Summary
+--------------------------------------------
+  Date:                `date`
+  Hostname:            `hostname`
+  System:              `uname -a`
+  User:                `whoami`
+  Directory:           ${OUTDIR}
+  Input:               ${JOBFILE##/*}
+  Output:              ${OUTPUT}
+  Temporary directory: ${JOBTMPDIR}
+  Executable script:   $0
+  Executable:          ${COMMAND}
+-------------------------------------------
+
+EOF
+
+if [[ ! -z ${PBS_JOBID} ]]; then
+    cat << EOF
+PBS Job Status
+-------------------------------------------
+  $(qstat -f ${PBS_JOBID} 2>&1)
+-------------------------------------------
+
+EOF
+fi
+
+# Check and read input file
+# Read mandatory file list - Same as JOBNAME (Table PRE_CALC)
+
+LINE_PRECALC=`grep -nw 'PRE_CALC' ${SETFILE}`
+LINE_PRECALC=`echo "scale=0;${LINE_PRECALC%%:*}+4" | bc`
+
+# Read table, substitute variable flags and spaces for saved name in JOBTMPDIR
+
+SAVED_NAME=`awk 'NR=="'${LINE_PRECALC}'"{printf("%s", substr($0,1,23))}' ${SETFILE} | sed "s/\[job.*\]/${JOBNAME}/g" | sed "s/\[ref.*\]/${REFNAME}/g" | sed "s/\s//g"`
+
+# Read table, substitute variable flags and spaces for temporary name in JOBTMPDIR
+
+TMP_NAME=`awk 'NR=="'${LINE_PRECALC}'"{printf("%s", substr($0,24,23))}' ${SETFILE} | sed "s/\[job.*\]/${JOBNAME}/g" | sed "s/\[ref.*\]/${REFNAME}/g" | sed "s/\s//g"`
+
+while [[ ${TMP_NAME} != '---------'* && ${move_file} == true ]]; do
+
+    filelist=`find ${INPDIR} -name "${SAVED_NAME}"`
+    filelist=(${filelist//${INPDIR}\//})
+
+    # Make subdir for files stored in sub-folders 
+
+    for file in ${filelist[@]}; do
+
+        # Make sure the file is not empty
+
+        if [[ ! -s ${INPDIR}/${file} ]]; then
+            continue
+        fi
+
+        TMP_NAME_REAL=${TMP_NAME}
+
+        # If TMP_NAME is '*', keep the original name
+
+        if [[ ${TMP_NAME} == *'*'* ]]; then
+            TMP_NAME_REAL=${file##*/}
+        fi
+
+        # If TMP_NAME ends with '/', update it
+
+        if [[ ${TMP_NAME: -1} == '/' ]]; then
+            TMP_NAME_REAL=`echo "${TMP_NAME}${file##*/}"`
+        fi
+
+        # Find files in INPDIR and copy them to JOBTMPDIR
+
+        echo "Find input data: ${INPDIR}/${file}" 2>&1 | tee -a ${OUTDIR}/${OUTPUT}  
+
+        # Cover the duplicate file. 
+
+        if [[ ${file} == ${JOBFILE##*/} ]]; then
+            is_jobfile=true
+        else
+            is_jobfile=false
+        fi
+
+        if [[ -e ${JOBTMPDIR}/${TMP_NAME_REAL} && -s ${JOBTMPDIR}/${TMP_NAME_REAL} ]]; then
+            if [[ ${is_jobfile} != true ]]; then
+                continue
+            fi
+            echo "Warning! Duplicate file detected in temporary directory: ${JOBTMPDIR}/${TMP_NAME_REAL}." 2>&1
+            echo "  The file will be covered by the new entry ${INPDIR}/${file}." 2>&1
+        fi
+        cp -r ${INPDIR}/${file} ${JOBTMPDIR}/${TMP_NAME_REAL}
+        echo "Input ${file} copied as ${JOBTMPDIR##*/}/${TMP_NAME_REAL}."
+
+        # Synchonise files on all nodes
+
+        if [[ ! -z ${PCLIST} ]]; then
+            for PC in ${PCLIST[@]}; do
+                scp ${INPDIR}/${file} ${PC}     : ${JOBTMPDIR}/${TMP_NAME_REAL}
+                echo "File synchonised on ${PC} : ${JOBTMPDIR}/${TMP_NAME_REAL}"
+            done
+        fi
+    done
+
+    LINE_PRECALC=`echo "scale=0;${LINE_PRECALC}+1" | bc`
+    SAVED_NAME=`awk 'NR=="'${LINE_PRECALC}'"{printf("%s", substr($0,1,23))}' ${SETFILE} | sed "s/\[job.*\]/${JOBNAME}/g" | sed "s/\[ref.*\]/${REFNAME}/g" | sed "s/\s//g"`
+    TMP_NAME=`awk 'NR=="'${LINE_PRECALC}'"{printf("%s", substr($0,24,23))}' ${SETFILE} | sed "s/\[job.*\]/${JOBNAME}/g" | sed "s/\[ref.*\]/${REFNAME}/g" | sed "s/\s//g"`
+done
+
+# Read external file list - Same as REFNAME (Table REF_FILE)
+
+LINE_REF=`grep -nw 'REF_FILE' ${SETFILE}`
+LINE_REF=`echo "scale=0;${LINE_REF%%:*}+4" | bc`
+
+# Read table, substitute variable flags and spaces for saved name in JOBTMPDIR
+
+SAVED_NAME=`awk 'NR=="'${LINE_REF}'"{printf("%s", substr($0,1,23))}' ${SETFILE} | sed "s/\[job.*\]/${JOBNAME}/g" | sed "s/\[ref.*\]/${REFNAME}/g" | sed "s/\s//g"`
+
+# Read table, substitute variable flags and spaces for temporary name in JOBTMPDIR
+
+TMP_NAME=`awk 'NR=="'${LINE_REF}'"{printf("%s", substr($0,24,23))}' ${SETFILE} | sed "s/\[job.*\]/${JOBNAME}/g" | sed "s/\[ref.*\]/${REFNAME}/g" | sed "s/\s//g"`
+
+while [[ ${TMP_NAME} != '---------'* && ${move_file} == true && ${REFNAME[@]} != 'none' ]]; do
+
+    # List files, to get all matched files in 'SAVED_NAME' settings
+    
+    filelist=`find ${INPDIR} -name "${SAVED_NAME}"`
+    filelist=(${filelist//${INPDIR}\//})
+    cat << EOF
+
+        ${filelist}
+
+EOF
+
+    # Make subdir for files stored in sub-folders 
+
+    for file in ${filelist[@]}; do
+
+        # Make sure the file is not empty
+
+        if [[ ! -s ${INPDIR}/${file} ]]; then
+            continue
+        fi
+
+        TMP_NAME_REAL=${TMP_NAME}
+
+        # If TMP_NAME is '*', keep the original name
+
+        if [[ ${TMP_NAME} == *'*'* ]]; then
+            TMP_NAME_REAL=${file##*/}
+        fi
+
+        # If TMP_NAME ends with '/', update it
+
+        if [[ ${TMP_NAME: -1} == '/' ]]; then
+            TMP_NAME_REAL=`echo "${TMP_NAME}${file##*/}"`
+        fi
+
+        # Find files in INPDIR and copy them to JOBTMPDIR
+
+        echo "Find input reference: ${INPDIR}/${file}" 2>&1
+
+        # Do not cover the duplicate file. 
+
+        if [[ -e ${JOBTMPDIR}/${TMP_NAME_REAL} && -s ${JOBTMPDIR}/${TMP_NAME_REAL} ]]; then
+            echo "Warning! Duplicate file detected in temporary directory: ${JOBTMPDIR}/${TMP_NAME_REAL}." 2>&1
+            echo "  The new reference entry ${INPDIR}/${file} is ignored." 2>&1
+            continue
+        fi
+        cp -r ${INPDIR}/${file} ${JOBTMPDIR}/${TMP_NAME_REAL}
+        echo "Input ${file} copied as ${JOBTMPDIR##*/}/${TMP_NAME_REAL}."
+
+        # Synchonise files on all nodes
+
+        if [[ ! -z ${PCLIST} ]]; then
+            for PC in ${PCLIST[@]}; do
+                scp ${INPDIR}/${file}     ${PC} : ${JOBTMPDIR}/${TMP_NAME_REAL}
+                echo "File synchonised on ${PC} : ${JOBTMPDIR}/${TMP_NAME_REAL}"
+            done
+        fi
+    done
+
+    LINE_REF=`echo "scale=0;${LINE_REF}+1" | bc`
+    SAVED_NAME=`awk 'NR=="'${LINE_REF}'"{printf("%s", substr($0,1,23))}' ${SETFILE} | sed "s/\[job.*\]/${JOBNAME}/g" | sed "s/\[ref.*\]/${REFNAME}/g" | sed "s/\s//g"`
+    TMP_NAME=`awk 'NR=="'${LINE_REF}'"{printf("%s", substr($0,24,23))}' ${SETFILE} | sed "s/\[job.*\]/${JOBNAME}/g" | sed "s/\[ref.*\]/${REFNAME}/g" | sed "s/\s//g"`
+done
+
+echo "All files are synchonised."
+
+# Launch calculations
+
+cat << EOF | tee -a ${OUTDIR}/${OUTPUT}
+
+-------------------------------------------
+               Job Ready to Go
+-------------------------------------------
+  Job name       : ${JOBNAME}
+  ID             : ${PBS_JOBID}
+  Temporary dir  : ${JOBTMPDIR}
+EOF
+cat << EOF
+  List of files  : $(ls -l ${JOBTMPDIR} 2>&1)
+EOF
+cat << EOF | tee -a ${OUTDIR}/${OUTPUT}
+-------------------------------------------
+
+===========================================
+                INPUT SCRIPT
+===========================================
+
+$(cat ${JOBFILE})
+
+===========================================
+EOF
+cd ${JOBTMPDIR}
+echo "Entering temporary directory..."
+echo "Launching the job..."
+
+echo "${COMMAND} ${JOBFILE##/*} >> ${OUTDIR}/${OUTPUT} 2>&1" | bash
+
+cd ${OUTDIR}
